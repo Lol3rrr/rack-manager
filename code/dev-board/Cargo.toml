@@ -1,0 +1,20 @@
+[package]
+name = "dev-board"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+protocol = { path = "../protocol" }
+executor = { path = "../executor", features = ["stm32l432"] }
+utils = { path = "../utils" }
+general = { path = "../general" }
+
+embedded-hal = "1.0.0-alpha.8"
+cortex-m = "0.7.5"
+cortex-m-rt = "0.7.1"
+panic-halt = "0.2.0"
+panic-semihosting = "0.6.0"
+cortex-m-semihosting = "0.5.0"
+stm32l4xx-hal = { git = "https://github.com/Lol3rrr/stm32l4xx-hal", rev = "6ad29b95b6317ea986f0746fd8fd0ff6ab4466c0", features = ["rt", "stm32l432"] }

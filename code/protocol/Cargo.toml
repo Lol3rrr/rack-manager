@@ -1,0 +1,17 @@
+[package]
+name = "protocol"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+general = { path = "../general" }
+
+embedded-hal = "1.0.0-alpha.8"
+nb = "1.0.0"
+
+
+[dev-dependencies]
+embedded-hal-mock = { git = "https://github.com/dbrgn/embedded-hal-mock", branch = "1-alpha" }
+tokio = { version = "1.21", features = ["rt"] }

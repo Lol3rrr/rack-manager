@@ -1,0 +1,2 @@
+[workspace]
+members = ["controller", "executor", "protocol", "general", "utils", "dev-board"]

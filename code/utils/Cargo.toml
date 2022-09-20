@@ -1,0 +1,19 @@
+[package]
+name = "utils"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["stm32l432"]
+stm32l432 = []
+
+[dependencies]
+general = { path = "../general" }
+embedded-hal = "1.0.0-alpha.8"
+
+spin = { version = "0.9", default_features = false, features = ["spin_mutex"] }
+
+cortex-m = { version = "0.7", default_features = false }
+stm32l4xx-hal = { git = "https://github.com/Lol3rrr/stm32l4xx-hal", rev = "6ad29b95b6317ea986f0746fd8fd0ff6ab4466c0", features = ["rt", "stm32l432"] }
