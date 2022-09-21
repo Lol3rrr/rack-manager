@@ -1,4 +1,4 @@
-use executor::{tasks, Runtime, StaticList, TaskList};
+use executor::{tasks, Runtime, StaticList};
 
 async fn first() {}
 
@@ -11,10 +11,10 @@ fn main() {
 
     assert_eq!(3, list.length());
 
-    assert!(list.get_task(0).is_some());
-    assert!(list.get_task(1).is_some());
-    assert!(list.get_task(2).is_some());
-    assert!(list.get_task(3).is_none());
+    assert!(list.get(0).is_some());
+    assert!(list.get(1).is_some());
+    assert!(list.get(2).is_some());
+    assert!(list.get(3).is_none());
 
     let runtime = Runtime::new(list);
     runtime.run();

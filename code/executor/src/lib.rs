@@ -15,8 +15,12 @@ pub use tasklist::*;
 mod waking;
 
 mod helper;
-pub use helper::YieldNow;
+pub use helper::{yield_now, YieldNow};
 
+/// An async Runtime for a no_std environment, which does not perform any runtime memory allocation.
+///
+/// This runtime only handles a fixed number of async Tasks, that are known at compile-time and
+/// does not support dynamically starting/spawning new Tasks.
 pub struct Runtime<'f, T, const L: usize> {
     metadata: [TaskMetadata; L],
     wakers: [waking::InternalWaker; L],
@@ -32,6 +36,7 @@ impl<'f, T, const L: usize> Runtime<'f, T, L>
 where
     T: TaskList<'f>,
 {
+    /// Creates a new Runtime for the List of Tasks
     pub fn new(tasks: Task<'f, T, L>) -> Self {
         let wakers = array::from_fn(|_| waking::InternalWaker::new());
         let meta = array::from_fn(|idx| TaskMetadata {
@@ -46,6 +51,8 @@ where
         }
     }
 
+    /// Actually starts/runs the Runtime, this will never return as we expect the Tasks to run
+    /// forever.
     pub fn run(mut self) -> ! {
         loop {
             for (id, (entry, iwaker)) in
@@ -56,7 +63,7 @@ where
                 }
                 iwaker.set_ready(false);
 
-                let task = self.tasks.get_task_mut(id).unwrap();
+                let task = self.tasks.get_mut(id).unwrap();
                 let task_fut = task.content().unwrap();
 
                 let waker = unsafe { waking::create_waker(iwaker) };

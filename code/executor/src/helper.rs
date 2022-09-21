@@ -1,5 +1,8 @@
 use core::future::Future;
 
+/// Allows for Yielding from the current async Task once, but still being marked as executable
+/// immediately. This is useful for making sure that an async Task yields at least once, when it
+/// hits this Future and allows other Futures to be run
 pub struct YieldNow {
     polled: bool,
 }
@@ -8,6 +11,16 @@ impl YieldNow {
     pub fn new() -> Self {
         YieldNow { polled: false }
     }
+}
+
+impl Default for YieldNow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn yield_now() -> YieldNow {
+    YieldNow::new()
 }
 
 impl Future for YieldNow {

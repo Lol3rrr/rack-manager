@@ -19,6 +19,7 @@ unsafe fn w_wake_by_ref(ptr: *const ()) {
 }
 unsafe fn w_drop(_: *const ()) {}
 
+/// # Safety
 /// The provided `InternalWaker` needs to have a lifetime that is valid for at least the entire
 /// Duration of the Runtime
 pub unsafe fn create_waker(iwaker: &InternalWaker) -> Waker {
