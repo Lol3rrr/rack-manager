@@ -3,6 +3,8 @@ use core::ops::{Deref, DerefMut};
 mod serial;
 pub use serial::*;
 
+pub mod logging;
+
 struct NoInterruptMutex<T> {
     mutex: spin::Mutex<T>,
 }

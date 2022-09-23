@@ -14,9 +14,6 @@ pub use tasklist::*;
 
 mod waking;
 
-mod helper;
-pub use helper::{yield_now, YieldNow};
-
 /// An async Runtime for a no_std environment, which does not perform any runtime memory allocation.
 ///
 /// This runtime only handles a fixed number of async Tasks, that are known at compile-time and

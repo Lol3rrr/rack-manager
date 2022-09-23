@@ -1,15 +1,11 @@
 #![no_std]
 #![no_main]
+#![feature(default_alloc_error_handler)]
 
 use cortex_m::singleton;
 use executor::tasks;
-use general::AsyncSerial;
 use hal::delay::Delay;
 use hal::hal::delay::blocking::DelayUs;
-use hal::hal::nb::block;
-use hal::hal::serial::nb::Read;
-use hal::hal::serial::nb::Write;
-use protocol::Extension;
 
 extern crate cortex_m;
 #[macro_use]
@@ -29,8 +25,17 @@ static SerialTxNotifier: utils::SerialNotifier<utils::Tx2Key> =
 static SerialRxNotifier: utils::SerialNotifier<utils::Rx2Key> =
     utils::SerialNotifier::<utils::Rx2Key>::new();
 
+#[global_allocator]
+static ALLOC: linked_list_allocator::LockedHeap = linked_list_allocator::LockedHeap::empty();
+
+extern crate alloc;
+
 #[entry]
 fn main() -> ! {
+    unsafe {
+        ALLOC.lock().init((0x2000C000 + 8000) as *mut u8, 4000);
+    }
+
     let cp = cortex_m::Peripherals::take().unwrap();
     let dp = hal::stm32::Peripherals::take().unwrap();
 
@@ -79,6 +84,52 @@ fn main() -> ! {
     let serial =
         hal::serial::Serial::usart2(dp.USART2, (tx, rx), serial_conf, clocks, &mut rcc.apb1r1);
 
+    let aserial = {
+        let rx1 = singleton!(: [u8; 256] = [0; 256]).unwrap();
+        let rx2 =
+            singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
+                .unwrap();
+        let tx =
+            singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
+                .unwrap();
+        utils::Serial::new(
+            serial,
+            (channels.7, channels.6),
+            (tx, rx1, rx2),
+            (&SerialTxNotifier, &SerialRxNotifier),
+        )
+    };
+    led.set_high();
+
+    let alloc = singleton!(: utils::allocator::LinkedListAllocator<1024> = utils::allocator::LinkedListAllocator::<1024>::new(
+        0x2000C000 as *mut u8,
+        (0x2000C000 + 8000) as *mut u8,
+    )).unwrap();
+
+    timer.delay_ms(500);
+
+    led.set_low();
+
+    timer.delay_ms(500);
+
+    let (tx, rx) = utils::queue::unbounded::mpsc::queue(alloc);
+    let (logger, logging_task) = utils::logging::logger(aserial, rx, tx);
+
+    led.set_high();
+
+    timer.delay_ms(500);
+
+    tracing::subscriber::set_global_default(logger).unwrap();
+
+    led.set_low();
+
+    let span = tracing::span!(tracing::Level::INFO, "testing");
+    let entered = span.enter();
+
+    tracing::info!("testing2");
+
+    drop(entered);
+
     /*
     let extension = Extension::init(
         gpioa
@@ -110,44 +161,20 @@ fn main() -> ! {
     );
     */
 
-    let aserial = {
-        let rx1 = singleton!(: [u8; 256] = [0; 256]).unwrap();
-        let rx2 =
-            singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
-                .unwrap();
-        let tx =
-            singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
-                .unwrap();
-        utils::Serial::new(
-            serial,
-            (channels.7, channels.6),
-            (tx, rx1, rx2),
-            (&SerialTxNotifier, &SerialRxNotifier),
-        )
-    };
-
     tasks!(
         task_list,
-        (send(aserial), ext_task),
-        (other(led, timer), test)
+        (send(), ext_task),
+        (other(led, timer), test),
+        (logging_task, lb)
     );
 
     let runtime = executor::Runtime::new(task_list);
     runtime.run();
 }
 
-async fn send(serial: utils::Serial) {
-    let (mut tx, rx) = serial.split();
-
-    let (mut rx, _, _) = rx.split();
-
-    let data = b"testing \n";
+async fn send() {
     loop {
-        let mut buffer = [0; 256];
-        buffer[0..data.len()].copy_from_slice(data);
-        tx.write(&buffer).await;
-
-        executor::YieldNow::new().await;
+        utils::futures::YieldNow::new().await;
     }
 }
 
@@ -164,7 +191,7 @@ where
 
         timer.delay_ms(500);
 
-        executor::YieldNow::new().await;
+        utils::futures::YieldNow::new().await;
     }
 }
 

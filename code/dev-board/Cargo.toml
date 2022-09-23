@@ -11,6 +11,9 @@ executor = { path = "../executor", features = ["stm32l432"] }
 utils = { path = "../utils" }
 general = { path = "../general" }
 
+tracing = { version = "0.1.36", default-features = false, features = ["attributes"] }
+linked_list_allocator = { version = "0.10" }
+
 embedded-hal = "1.0.0-alpha.8"
 cortex-m = "0.7.5"
 cortex-m-rt = "0.7.1"
