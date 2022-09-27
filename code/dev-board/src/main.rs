@@ -4,6 +4,7 @@
 
 use cortex_m::singleton;
 use executor::tasks;
+use general::AsyncSerial;
 use hal::delay::Delay;
 use hal::hal::delay::blocking::DelayUs;
 
@@ -18,7 +19,7 @@ extern crate stm32l4xx_hal as hal;
 use crate::hal::prelude::*;
 use crate::rt::entry;
 use crate::rt::ExceptionFrame;
-use hal::interrupt;
+use hal::stm32::interrupt;
 
 static SerialTxNotifier: utils::SerialNotifier<utils::Tx2Key> =
     utils::SerialNotifier::<utils::Tx2Key>::new();
@@ -39,9 +40,19 @@ fn main() -> ! {
     let cp = cortex_m::Peripherals::take().unwrap();
     let dp = hal::stm32::Peripherals::take().unwrap();
 
-    dp.DMA1
-        .ccr7
-        .modify(|r, w| unsafe { w.bits(r.bits()) }.htie().bit(false));
+    dp.DMA1.ccr7.modify(|r, w| {
+        unsafe { w.bits(r.bits()) }
+            .tcie()
+            .set_bit()
+            .teie()
+            .set_bit()
+            .pl()
+            .high()
+    });
+
+    unsafe {
+        cortex_m::interrupt::enable();
+    }
 
     let mut flash = dp.FLASH.constrain();
     let mut rcc = dp.RCC.constrain();
@@ -86,16 +97,13 @@ fn main() -> ! {
 
     let aserial = {
         let rx1 = singleton!(: [u8; 256] = [0; 256]).unwrap();
-        let rx2 =
-            singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
-                .unwrap();
         let tx =
             singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
                 .unwrap();
         utils::Serial::new(
             serial,
             (channels.7, channels.6),
-            (tx, rx1, rx2),
+            (tx, rx1),
             (&SerialTxNotifier, &SerialRxNotifier),
         )
     };
@@ -112,23 +120,11 @@ fn main() -> ! {
 
     timer.delay_ms(500);
 
-    let (tx, rx) = utils::queue::unbounded::mpsc::queue(alloc);
-    let (logger, logging_task) = utils::logging::logger(aserial, rx, tx);
-
     led.set_high();
 
     timer.delay_ms(500);
 
-    tracing::subscriber::set_global_default(logger).unwrap();
-
     led.set_low();
-
-    let span = tracing::span!(tracing::Level::INFO, "testing");
-    let entered = span.enter();
-
-    tracing::info!("testing2");
-
-    drop(entered);
 
     /*
     let extension = Extension::init(
@@ -163,17 +159,25 @@ fn main() -> ! {
 
     tasks!(
         task_list,
-        (send(), ext_task),
-        (other(led, timer), test),
-        (logging_task, lb)
+        (send(aserial), ext_task),
+        (other(led, timer), test)
     );
 
     let runtime = executor::Runtime::new(task_list);
     runtime.run();
 }
 
-async fn send() {
+async fn send<S>(mut serial: S)
+where
+    S: AsyncSerial<256>,
+{
     loop {
+        let mut buffer = [1; 256];
+        let content = b"test\n";
+        buffer[0..content.len()].copy_from_slice(content);
+
+        serial.write(buffer).await;
+
         utils::futures::YieldNow::new().await;
     }
 }
@@ -191,6 +195,9 @@ where
 
         timer.delay_ms(500);
 
+        // Testing
+        // SerialTxNotifier.transfer_complete();
+
         utils::futures::YieldNow::new().await;
     }
 }
@@ -203,8 +210,15 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
 #[interrupt]
 fn DMA1_CH7() {
     SerialTxNotifier.transfer_complete();
+    SerialRxNotifier.transfer_complete();
 }
 #[interrupt]
 fn DMA1_CH6() {
     SerialRxNotifier.transfer_complete();
+    SerialTxNotifier.transfer_complete();
+}
+#[interrupt]
+fn USART2() {
+    SerialRxNotifier.transfer_complete();
+    SerialTxNotifier.transfer_complete();
 }

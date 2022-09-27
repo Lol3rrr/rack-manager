@@ -14,6 +14,8 @@ pub mod allocator;
 
 pub mod futures;
 
+pub mod timer;
+
 pub(crate) mod atomic;
 
 #[cfg(not(loom))]
@@ -21,7 +23,7 @@ mod unsafecell {
     pub(crate) struct UnsafeCell<T>(core::cell::UnsafeCell<T>);
 
     impl<T> UnsafeCell<T> {
-        pub(crate) fn new(data: T) -> UnsafeCell<T> {
+        pub(crate) const fn new(data: T) -> UnsafeCell<T> {
             UnsafeCell(core::cell::UnsafeCell::new(data))
         }
 

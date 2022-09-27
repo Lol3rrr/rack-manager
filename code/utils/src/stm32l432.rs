@@ -20,18 +20,22 @@ impl<T> NoInterruptMutex<T> {
         }
     }
 
-    pub fn lock(&self) -> NoInterruptMutexGuard<'_, T> {
-        cortex_m::interrupt::disable();
-
-        NoInterruptMutexGuard {
-            guard: self.mutex.lock(),
-        }
+    pub fn with_lock<F>(&self, func: F)
+    where
+        F: FnOnce(spin::MutexGuard<'_, T>),
+    {
+        cortex_m::interrupt::free(|_| {
+            let guard = self.mutex.lock();
+            func(guard);
+        });
     }
 }
 
 impl<'m, T> Drop for NoInterruptMutexGuard<'m, T> {
     fn drop(&mut self) {
-        cortex_m::interrupt::disable();
+        unsafe {
+            cortex_m::interrupt::enable();
+        }
     }
 }
 impl<'m, T> Deref for NoInterruptMutexGuard<'m, T> {

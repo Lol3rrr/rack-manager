@@ -2,15 +2,36 @@ use core::{
     future::Future, marker::PhantomData, sync::atomic, sync::atomic::AtomicBool, task::Waker,
 };
 
-use embedded_hal::{nb::block, serial::nb::Read};
+use cortex_m::interrupt::InterruptNumber;
 use general::AsyncSerial;
 use hal::dma::CircReadDma;
-use stm32l4xx_hal::{self as hal, device::tim1::dmar};
+use stm32l4xx_hal::{self as hal};
 
 use super::NoInterruptMutex;
 
 pub struct Tx2Key;
 pub struct Rx2Key;
+
+pub trait NotifierKey {
+    type Interrupt: cortex_m::interrupt::InterruptNumber;
+
+    fn interrupt() -> Self::Interrupt;
+}
+
+impl NotifierKey for Tx2Key {
+    type Interrupt = hal::stm32::Interrupt;
+
+    fn interrupt() -> Self::Interrupt {
+        hal::stm32::Interrupt::DMA1_CH7
+    }
+}
+impl NotifierKey for Rx2Key {
+    type Interrupt = hal::stm32::Interrupt;
+
+    fn interrupt() -> Self::Interrupt {
+        hal::stm32::Interrupt::DMA1_CH6
+    }
+}
 
 pub struct SerialNotifier<KEY> {
     waker: NoInterruptMutex<Option<Waker>>,
@@ -37,7 +58,10 @@ impl SerialNotifier<Rx2Key> {
     }
 }
 
-impl<KEY> SerialNotifier<KEY> {
+impl<KEY> SerialNotifier<KEY>
+where
+    KEY: NotifierKey,
+{
     fn start_transfer(&self) {
         self.complete.store(false, atomic::Ordering::SeqCst);
     }
@@ -45,15 +69,15 @@ impl<KEY> SerialNotifier<KEY> {
     pub fn transfer_complete(&self) {
         self.complete.store(true, atomic::Ordering::SeqCst);
 
-        {
-            let guard = self.waker.lock();
-            if let Some(waker) = guard.as_ref() {
+        self.waker.with_lock(|waker| {
+            if let Some(waker) = waker.as_ref() {
                 waker.wake_by_ref();
             } else {
-                panic!("WHAT")
+                // panic!("WHAT")
             }
-            drop(guard);
-        }
+        });
+
+        cortex_m::peripheral::NVIC::mask(KEY::interrupt());
     }
 }
 
@@ -65,17 +89,17 @@ pub struct SerialTx {
 
 pub struct SerialRx {
     rx: hal::dma::CircBuffer<[u8; 256], hal::serial::RxDma2>,
-    rx_buffer_1: Option<&'static mut hal::dma::DMAFrame<256>>,
-    rx_buffer_2: Option<&'static mut hal::dma::DMAFrame<256>>,
     notifier: &'static SerialNotifier<Rx2Key>,
 }
 
 impl SerialTx {
     pub fn new(
-        tx: hal::serial::TxDma2,
+        mut tx: hal::serial::TxDma2,
         tx_buffer: &'static mut hal::dma::DMAFrame<256>,
         notifier: &'static SerialNotifier<Tx2Key>,
     ) -> Self {
+        tx.channel.listen(hal::dma::Event::TransferComplete);
+
         Self {
             tx: tx.frame_sender(),
             tx_buffer: Some(tx_buffer),
@@ -83,7 +107,7 @@ impl SerialTx {
         }
     }
 
-    pub fn write(&mut self, src: &[u8; 256]) -> TxFuture<'_> {
+    pub fn write(&mut self, src: &[u8; 256]) -> TxFuture<'_, hal::stm32::Interrupt> {
         // Prepare the Buffer
         let buffer = self.tx_buffer.take().expect("");
         {
@@ -96,6 +120,7 @@ impl SerialTx {
             tx: &mut self.tx,
             target_buffer: &mut self.tx_buffer,
             notifier: self.notifier,
+            interrupt: Tx2Key::interrupt(),
             state: TxState::Initial { data: buffer },
         }
     }
@@ -103,25 +128,25 @@ impl SerialTx {
 
 impl SerialRx {
     pub fn new(
-        rx: hal::serial::RxDma2,
+        mut rx: hal::serial::RxDma2,
         rx_buffer_1: &'static mut [u8; 256],
-        rx_buffer_2: &'static mut hal::dma::DMAFrame<256>,
         notifier: &'static SerialNotifier<Rx2Key>,
     ) -> Self {
+        rx.channel.listen(hal::dma::Event::TransferComplete);
+
         Self {
             rx: rx.circ_read(rx_buffer_1),
-            rx_buffer_1: None,
-            rx_buffer_2: Some(rx_buffer_2),
             notifier,
         }
     }
 
-    pub fn read(&mut self) -> RxFuture<'_> {
+    pub fn read(&mut self) -> RxFuture<'_, hal::stm32::Interrupt> {
         RxFuture {
             rx: &mut self.rx,
             notifier: self.notifier,
             pos: 0,
             buffer: [0; 256],
+            interrupt: Rx2Key::interrupt(),
         }
     }
 
@@ -138,7 +163,7 @@ impl SerialRx {
     }
 }
 
-pub struct TxFuture<'t> {
+pub struct TxFuture<'t, IT> {
     notifier: &'static SerialNotifier<Tx2Key>,
     target_buffer: &'t mut Option<&'static mut hal::dma::DMAFrame<256>>,
     tx: &'t mut hal::dma::FrameSender<
@@ -146,6 +171,7 @@ pub struct TxFuture<'t> {
         hal::serial::TxDma2,
         256,
     >,
+    interrupt: IT,
     state: TxState,
 }
 enum TxState {
@@ -156,17 +182,22 @@ enum TxState {
     Done,
 }
 
-impl<'t> Future for TxFuture<'t> {
+impl<'t, IT> Future for TxFuture<'t, IT>
+where
+    IT: InterruptNumber + Unpin,
+{
     type Output = ();
 
     fn poll(
         mut self: core::pin::Pin<&mut Self>,
         cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Self::Output> {
-        {
-            let mut guard = self.notifier.waker.lock();
-            *guard = Some(cx.waker().clone());
-            drop(guard);
+        self.notifier.waker.with_lock(|mut w| {
+            *w = Some(cx.waker().clone());
+        });
+
+        unsafe {
+            cortex_m::peripheral::NVIC::unmask(self.interrupt);
         }
 
         match core::mem::replace(&mut self.state, TxState::Done) {
@@ -176,7 +207,7 @@ impl<'t> Future for TxFuture<'t> {
                     Ok(_) => {
                         self.state = TxState::SendAndWaiting;
 
-                        cx.waker().wake_by_ref();
+                        // cx.waker().wake_by_ref();
 
                         core::task::Poll::Pending
                     }
@@ -194,6 +225,8 @@ impl<'t> Future for TxFuture<'t> {
                     *self.target_buffer = Some(buffer);
 
                     self.state = TxState::Done;
+
+                    // assert!(self.notifier.complete.load(atomic::Ordering::SeqCst));
 
                     core::task::Poll::Ready(())
                 }
@@ -213,24 +246,30 @@ impl<'t> Future for TxFuture<'t> {
     }
 }
 
-pub struct RxFuture<'t> {
+pub struct RxFuture<'t, IT> {
     rx: &'t mut hal::dma::CircBuffer<[u8; 256], hal::serial::RxDma2>,
     notifier: &'static SerialNotifier<Rx2Key>,
     pos: usize,
     buffer: [u8; 256],
+    interrupt: IT,
 }
 
-impl<'t> Future for RxFuture<'t> {
+impl<'t, IT> Future for RxFuture<'t, IT>
+where
+    IT: cortex_m::interrupt::InterruptNumber + Unpin,
+{
     type Output = [u8; 256];
 
     fn poll(
         mut self: core::pin::Pin<&mut Self>,
         cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Self::Output> {
-        {
-            let mut guard = self.notifier.waker.lock();
-            *guard = Some(cx.waker().clone());
-            drop(guard);
+        self.notifier.waker.with_lock(|mut w| {
+            *w = Some(cx.waker().clone());
+        });
+
+        unsafe {
+            cortex_m::peripheral::NVIC::unmask(self.interrupt);
         }
 
         cx.waker().wake_by_ref();
@@ -274,11 +313,7 @@ impl Serial {
     pub fn new<PINS>(
         serial: hal::serial::Serial<hal::pac::USART2, PINS>,
         channel: (hal::dma::dma1::C7, hal::dma::dma1::C6),
-        buffer: (
-            &'static mut hal::dma::DMAFrame<256>,
-            &'static mut [u8; 256],
-            &'static mut hal::dma::DMAFrame<256>,
-        ),
+        buffer: (&'static mut hal::dma::DMAFrame<256>, &'static mut [u8; 256]),
         notifier: (
             &'static SerialNotifier<Tx2Key>,
             &'static SerialNotifier<Rx2Key>,
@@ -290,7 +325,7 @@ impl Serial {
         let rx_dma = raw_rx.with_dma(channel.1);
 
         let tx = SerialTx::new(tx_dma, buffer.0, notifier.0);
-        let rx = SerialRx::new(rx_dma, buffer.1, buffer.2, notifier.1);
+        let rx = SerialRx::new(rx_dma, buffer.1, notifier.1);
 
         Self { tx, rx }
     }
@@ -301,8 +336,8 @@ impl Serial {
 }
 
 impl AsyncSerial<256> for Serial {
-    type ReceiveFuture<'t> = RxFuture<'t>;
-    type WriteFuture<'t> = TxFuture<'t>;
+    type ReceiveFuture<'t> = RxFuture<'t, hal::stm32::Interrupt>;
+    type WriteFuture<'t> = TxFuture<'t, hal::stm32::Interrupt>;
 
     fn read<'s, 'f>(&'s mut self) -> Self::ReceiveFuture<'f>
     where
