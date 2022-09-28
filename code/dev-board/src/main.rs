@@ -195,9 +195,6 @@ where
 
         timer.delay_ms(500);
 
-        // Testing
-        // SerialTxNotifier.transfer_complete();
-
         utils::futures::YieldNow::new().await;
     }
 }
@@ -210,15 +207,8 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
 #[interrupt]
 fn DMA1_CH7() {
     SerialTxNotifier.transfer_complete();
-    SerialRxNotifier.transfer_complete();
 }
 #[interrupt]
 fn DMA1_CH6() {
     SerialRxNotifier.transfer_complete();
-    SerialTxNotifier.transfer_complete();
-}
-#[interrupt]
-fn USART2() {
-    SerialRxNotifier.transfer_complete();
-    SerialTxNotifier.transfer_complete();
 }
