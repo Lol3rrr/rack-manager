@@ -1,0 +1,19 @@
+name: Rust Testing
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setting up Rust-Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          default: true
+          override: true
+      - name: Change directory
+        run: cd code/
+      - name: Testing
+        run: cargo test --workspace --exclude dev-board --exclude controller
