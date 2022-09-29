@@ -26,6 +26,11 @@ static SerialTxNotifier: utils::SerialNotifier<utils::Tx2Key> =
 static SerialRxNotifier: utils::SerialNotifier<utils::Rx2Key> =
     utils::SerialNotifier::<utils::Rx2Key>::new();
 
+static TIMER: utils::timer::fixed_size::TimerWheel<
+    utils::timer::fixed_size::LevelOneWheel,
+    utils::timer::fixed_size::Scale10Ms,
+> = utils::timer::fixed_size::TimerWheel::<utils::timer::fixed_size::LevelOneWheel, _>::new();
+
 #[global_allocator]
 static ALLOC: linked_list_allocator::LockedHeap = linked_list_allocator::LockedHeap::empty();
 
@@ -49,10 +54,6 @@ fn main() -> ! {
             .pl()
             .high()
     });
-
-    unsafe {
-        cortex_m::interrupt::enable();
-    }
 
     let mut flash = dp.FLASH.constrain();
     let mut rcc = dp.RCC.constrain();
@@ -126,6 +127,10 @@ fn main() -> ! {
 
     led.set_low();
 
+    timer.delay_ms(500);
+
+    TIMER.configure_tim3(dp.TIM3, clocks, 1000.Hz(), &mut rcc.apb1r1);
+
     /*
     let extension = Extension::init(
         gpioa
@@ -189,13 +194,13 @@ where
     loop {
         led.set_high();
 
-        timer.delay_ms(500);
+        TIMER.sleep_ms(250).await.unwrap();
 
         led.set_low();
 
-        timer.delay_ms(500);
+        TIMER.sleep_ms(250).await.unwrap();
 
-        utils::futures::YieldNow::new().await;
+        utils::futures::yield_now().await;
     }
 }
 
@@ -211,4 +216,13 @@ fn DMA1_CH7() {
 #[interrupt]
 fn DMA1_CH6() {
     SerialRxNotifier.transfer_complete();
+}
+
+#[interrupt]
+fn TIM3() {
+    TIMER.tick();
+
+    TIMER.clear_interrupt_tim3();
+
+    panic!();
 }

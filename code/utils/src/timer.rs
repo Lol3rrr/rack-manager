@@ -174,6 +174,13 @@ pub mod fixed_size {
         _marker: PhantomData<SCALE>,
     }
 
+    unsafe impl<WHEEL, SCALE> core::marker::Sync for TimerWheel<WHEEL, SCALE>
+    where
+        WHEEL: Wheel,
+        SCALE: Timescale,
+    {
+    }
+
     impl LevelOneWheel {
         const fn new() -> Self {
             #[allow(clippy::declare_interior_mutable_const)]
@@ -375,6 +382,66 @@ pub mod fixed_size {
                 }
             }
         }
+
+        #[cfg(feature = "stm32l432")]
+        pub fn configure_tim3(
+            &self,
+            timer: stm32l4xx_hal::pac::TIM3,
+            clocks: stm32l4xx_hal::rcc::Clocks,
+            timeout: impl Into<stm32l4xx_hal::time::Hertz>,
+            bus: &mut stm32l4xx_hal::rcc::APB1R1,
+        ) {
+            use stm32l4xx_hal::rcc::{Enable, Reset};
+
+            stm32l4xx_hal::pac::TIM6::enable(bus);
+            stm32l4xx_hal::pac::TIM6::reset(bus);
+
+            // Pause Timer
+            timer.cr1.modify(|_, w| w.cen().clear_bit());
+
+            let clock = clocks.timclk1();
+            let timeout = timeout.into();
+
+            // Find Prescaler
+            let psc = 15;
+            let arr = 4999;
+
+            timer.psc.write(|w| w.psc().bits(psc));
+            timer.arr.write(|w| unsafe { w.bits(arr) });
+
+            timer.egr.write(|w| w.ug().set_bit());
+
+            // Trigger an update event to load the prescaler value to the clock.
+            timer.egr.write(|w| w.ug().set_bit());
+
+            timer.sr.modify(|_, w| w.uif().clear_bit());
+
+            unsafe {
+                cortex_m::peripheral::NVIC::unmask(stm32l4xx_hal::stm32::Interrupt::TIM7);
+            }
+
+            timer.cr1.write(|w| {
+                w.cen()
+                    .set_bit()
+                    .udis()
+                    .clear_bit()
+                    .arpe()
+                    .set_bit()
+                    .urs()
+                    .any_event()
+            });
+            timer.cnt.write(|w| w.cnt().bits(0));
+
+            //timer.dier.write(|w| w.uie().set_bit());
+        }
+
+        #[cfg(feature = "stm32l432")]
+        pub fn clear_interrupt_tim3(&self) {
+            let raw_regs = stm32l4xx_hal::pac::TIM3::ptr();
+            let regs = unsafe { &*raw_regs };
+
+            regs.sr.write(|w| w.uif().clear_bit());
+        }
     }
 
     impl<SCALE> TimerWheel<LevelOneWheel, SCALE>
@@ -385,7 +452,7 @@ pub mod fixed_size {
             SleepMs {
                 timer: self,
                 handle: None,
-                time,
+                time: SCALE::scale_ms(time),
             }
         }
     }
@@ -521,7 +588,7 @@ pub mod fixed_size {
         }
 
         #[test]
-        fn sleep_future() {
+        fn sleep_future_1ms() {
             let timer = TimerWheel::<LevelOneWheel, Scale1Ms>::new();
 
             let mut sleep_fut = Box::pin(timer.sleep_ms(2));
@@ -534,6 +601,34 @@ pub mod fixed_size {
             assert_eq!(0, count.get());
 
             timer.tick();
+
+            let res = sleep_fut.as_mut().poll(&mut ctx);
+            assert!(res.is_pending());
+            assert_eq!(0, count.get());
+
+            timer.tick();
+
+            let res = sleep_fut.as_mut().poll(&mut ctx);
+            assert!(res.is_ready());
+            assert_eq!(1, count.get());
+        }
+
+        #[test]
+        fn sleep_future_10ms() {
+            let timer = TimerWheel::<LevelOneWheel, Scale10Ms>::new();
+
+            let mut sleep_fut = Box::pin(timer.sleep_ms(250));
+
+            let (waker, count) = futures_test::task::new_count_waker();
+            let mut ctx = core::task::Context::from_waker(&waker);
+
+            for _ in 0..24 {
+                let res = sleep_fut.as_mut().poll(&mut ctx);
+                assert!(res.is_pending());
+                assert_eq!(0, count.get());
+
+                timer.tick();
+            }
 
             let res = sleep_fut.as_mut().poll(&mut ctx);
             assert!(res.is_pending());
