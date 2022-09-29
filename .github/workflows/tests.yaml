@@ -13,7 +13,5 @@ jobs:
           toolchain: stable
           default: true
           override: true
-      - name: Change directory
-        run: cd code/
       - name: Testing
-        run: cargo test --workspace --exclude dev-board --exclude controller
+        run: cd code/; cargo test --workspace --exclude dev-board --exclude controller
