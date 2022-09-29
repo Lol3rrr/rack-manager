@@ -334,12 +334,6 @@ pub mod unbounded {
             use super::*;
 
             #[test]
-            fn test() {
-                assert_eq!(72, core::mem::size_of::<Buffer<u8, 4>>());
-                assert_eq!(72, core::mem::size_of::<Buffer<(u64, u64), 4>>());
-            }
-
-            #[test]
             fn create_queue() {
                 let (tx, rx) = queue::<u8, _>(&std::alloc::System);
 

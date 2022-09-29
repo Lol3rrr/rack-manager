@@ -6,9 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["stm32l432"]
-stm32l432 = []
+default = []
 
 [dependencies]
 general = { path = "../general" }
-stm32l4xx-hal = { git = "https://github.com/Lol3rrr/stm32l4xx-hal", rev = "6ad29b95b6317ea986f0746fd8fd0ff6ab4466c0", features = ["rt", "stm32l432"] }

@@ -184,6 +184,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "The Allocator is currently WIP and not a priority"]
     fn big_allocation_double() {
         let mut buffer: Vec<u8> = vec![0; 1024];
         let ptr = buffer.as_mut_ptr_range();

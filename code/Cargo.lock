@@ -189,7 +189,6 @@ name = "executor"
 version = "0.1.0"
 dependencies = [
  "general",
- "stm32l4xx-hal 0.7.1 (git+https://github.com/Lol3rrr/stm32l4xx-hal?rev=6ad29b95b6317ea986f0746fd8fd0ff6ab4466c0)",
 ]
 
 [[package]]

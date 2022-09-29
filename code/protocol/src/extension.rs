@@ -364,6 +364,10 @@ mod tests {
 
         let extension = init_extension(13, &mut ready, &mut selection, &mut serial);
 
+        extension
+            .ready_pin
+            .expect(&[PinTransaction::new(PinTransactionKind::Set(PinState::Low))]);
+
         let mut async_serial = general::mocks::MockSerial::new();
         {
             let restart_packet = Packet {
@@ -393,6 +397,10 @@ mod tests {
         let mut serial = SerialMock::new(&[]);
 
         let extension = init_extension(13, &mut ready, &mut selection, &mut serial);
+
+        extension
+            .ready_pin
+            .expect(&[PinTransaction::new(PinTransactionKind::Set(PinState::Low))]);
 
         let mut async_serial = general::mocks::MockSerial::new();
         {
@@ -438,6 +446,10 @@ mod tests {
         let mut serial = SerialMock::new(&[]);
 
         let extension = init_extension(13, &mut ready, &mut selection, &mut serial);
+
+        extension
+            .ready_pin
+            .expect(&[PinTransaction::new(PinTransactionKind::Set(PinState::Low))]);
 
         let mut async_serial = general::mocks::MockSerial::new();
         {
@@ -495,6 +507,10 @@ mod tests {
         let mut serial = SerialMock::new(&[]);
 
         let extension = init_extension(13, &mut ready, &mut selection, &mut serial);
+
+        extension
+            .ready_pin
+            .expect(&[PinTransaction::new(PinTransactionKind::Set(PinState::Low))]);
 
         let mut async_serial = general::mocks::MockSerial::new();
         {

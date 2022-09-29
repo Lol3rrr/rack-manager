@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 protocol = { path = "../protocol" }
-executor = { path = "../executor", features = ["stm32l432"] }
-utils = { path = "../utils" }
+executor = { path = "../executor" }
+utils = { path = "../utils", features = ["stm32l432"] }
 general = { path = "../general" }
 
 tracing = { version = "0.1.36", default-features = false, features = ["attributes"] }

@@ -17,8 +17,10 @@ pub trait AsyncSerial<const N: usize> {
         's: 'f;
 }
 
-#[cfg(False)]
+#[cfg(feature = "mocks")]
 pub mod mocks {
+    extern crate alloc;
+
     use alloc::vec::Vec;
     use core::{future::Future, marker::PhantomData};
 
