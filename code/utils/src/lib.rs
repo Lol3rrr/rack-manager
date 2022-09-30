@@ -37,3 +37,7 @@ pub(crate) use unsafecell::*;
 
 #[cfg(loom)]
 pub(crate) use loom::cell::UnsafeCell;
+
+mod sealed {
+    pub trait Sealed {}
+}

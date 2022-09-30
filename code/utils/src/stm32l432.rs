@@ -1,7 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-mod serial;
-pub use serial::*;
+pub mod serial;
 
 pub mod logging;
 

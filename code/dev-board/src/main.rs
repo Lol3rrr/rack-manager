@@ -21,10 +21,10 @@ use crate::rt::entry;
 use crate::rt::ExceptionFrame;
 use hal::stm32::interrupt;
 
-static SerialTxNotifier: utils::SerialNotifier<utils::Tx2Key> =
-    utils::SerialNotifier::<utils::Tx2Key>::new();
-static SerialRxNotifier: utils::SerialNotifier<utils::Rx2Key> =
-    utils::SerialNotifier::<utils::Rx2Key>::new();
+static SerialTxNotifier: utils::serial::SerialNotifier<utils::serial::Tx2Key> =
+    utils::serial::SerialNotifier::<utils::serial::Tx2Key>::new();
+static SerialRxNotifier: utils::serial::SerialNotifier<utils::serial::Rx2Key> =
+    utils::serial::SerialNotifier::<utils::serial::Rx2Key>::new();
 
 static TIMER: utils::timer::fixed_size::TimerWheel<
     utils::timer::fixed_size::LevelOneWheel,
@@ -97,37 +97,29 @@ fn main() -> ! {
         hal::serial::Serial::usart2(dp.USART2, (tx, rx), serial_conf, clocks, &mut rcc.apb1r1);
 
     let aserial = {
-        let rx1 = singleton!(: [u8; 256] = [0; 256]).unwrap();
-        let tx =
+        let rx1 =
             singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
                 .unwrap();
-        utils::Serial::new(
-            serial,
+        let tx1 =
+            singleton!(: stm32l4xx_hal::dma::DMAFrame<256> = stm32l4xx_hal::dma::DMAFrame::new())
+                .unwrap();
+        let (tx, rx) = serial.split();
+        utils::serial::Serial::<utils::serial::USART2>::new(
+            tx,
+            rx,
             (channels.7, channels.6),
-            (tx, rx1),
+            (tx1, rx1),
             (&SerialTxNotifier, &SerialRxNotifier),
         )
     };
-    led.set_high();
-
-    let alloc = singleton!(: utils::allocator::LinkedListAllocator<1024> = utils::allocator::LinkedListAllocator::<1024>::new(
-        0x2000C000 as *mut u8,
-        (0x2000C000 + 8000) as *mut u8,
-    )).unwrap();
-
-    timer.delay_ms(500);
-
-    led.set_low();
-
-    timer.delay_ms(500);
 
     led.set_high();
 
-    timer.delay_ms(500);
+    timer.delay_ms(500).unwrap();
 
     led.set_low();
 
-    timer.delay_ms(500);
+    timer.delay_ms(500).unwrap();
 
     TIMER.configure_tim3(dp.TIM3, clocks, 1000.Hz(), &mut rcc.apb1r1);
 
@@ -162,11 +154,7 @@ fn main() -> ! {
     );
     */
 
-    tasks!(
-        task_list,
-        (send(aserial), ext_task),
-        (other(led, timer), test)
-    );
+    tasks!(task_list, (send(aserial), ext_task), (other(led), test));
 
     let runtime = executor::Runtime::new(task_list);
     runtime.run();
@@ -187,16 +175,16 @@ where
     }
 }
 
-async fn other<PIN>(mut led: PIN, mut timer: Delay)
+async fn other<PIN>(mut led: PIN)
 where
     PIN: embedded_hal::digital::blocking::OutputPin,
 {
     loop {
-        led.set_high();
+        led.set_high().unwrap();
 
         TIMER.sleep_ms(250).await.unwrap();
 
-        led.set_low();
+        led.set_low().unwrap();
 
         TIMER.sleep_ms(250).await.unwrap();
 
