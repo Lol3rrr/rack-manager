@@ -29,6 +29,13 @@ pub mod fixed_size {
     //! same slot in the wheel. This is solved, by losing some accuracy in these cases, by
     //! performing a linear search for a free slot in the rest of the timer wheel or higher ones
     //! in the hierarchie.
+    //!
+    //! # Functionality
+    //! The overall [`TimerWheel`] should be some form of static variable, from which you can start
+    //! all your timer-related futures, like sleeping.
+    //! You then also need to make sure that you register an interrupt-handler, for whatever
+    //! hardware timer you are using, in which you call the [`TimerWheel::tick`] function to drive
+    //! the Timer.
 
     use core::{future::Future, marker::PhantomData, num::NonZeroUsize, task::Waker};
 
@@ -37,10 +44,16 @@ pub mod fixed_size {
         unsafecell::UnsafeCell,
     };
 
+    /// This is used to configure the Timescale of the Timer and also determines the resolution of
+    /// the timers as well as the frequency at which the Timer needs to be updated ([`TimerWheel::tick`]).
     pub trait Timescale {
         fn scale_ms(time: usize) -> usize;
+
+        fn step_ms() -> usize;
     }
 
+    /// A general Timescale implementation that can be used to easily adjust the Timescale to
+    /// whatever fits best in your use-case
     pub struct ScaleGeneral<const N: usize> {}
 
     impl<const N: usize> Timescale for ScaleGeneral<N> {
@@ -51,12 +64,17 @@ pub mod fixed_size {
                 (time / N) + 1
             }
         }
+
+        fn step_ms() -> usize {
+            N
+        }
     }
 
     pub type Scale1Ms = ScaleGeneral<1>;
     pub type Scale10Ms = ScaleGeneral<10>;
     pub type Scale100Ms = ScaleGeneral<100>;
 
+    /// The internal Slot used by the TimerWheels
     pub struct Slot {
         state: AtomicU8,
         waker: UnsafeCell<Option<Waker>>,
@@ -73,6 +91,8 @@ pub mod fixed_size {
         }
     }
 
+    /// A Storage wrapper for a list of Slots, allowing us to easily interact with it for the
+    /// TimerWheels
     pub struct SlotStorage<const N: usize> {
         wakers: [Slot; N],
         used_slots: AtomicUsize,
@@ -151,19 +171,24 @@ pub mod fixed_size {
         }
     }
 
+    /// A one level TimerWheel-Storage
     pub struct LevelOneWheel {
         current: AtomicUsize,
         slots: [AtomicIsize; 32],
     }
 
+    /// A two level TimerWheel-Storage
     pub struct LevelTwoWheel {
         slots: [LevelOneWheel; 32],
     }
 
+    /// A three level TimerWheel-Storage
     pub struct LevelThreeWheel {
         slots: [LevelTwoWheel; 32],
     }
 
+    /// The general TimerWheel that you, as the consumer of the api, will interact with the most
+    /// and perform all your actions through this.
     pub struct TimerWheel<WHEEL, SCALE>
     where
         WHEEL: Wheel,
@@ -256,21 +281,28 @@ pub mod fixed_size {
         }
     }
 
+    /// The Error that could be received when trying to add a new Entry on the Timer
     #[derive(Debug, PartialEq, Eq)]
     pub enum WheelAddError {
+        /// The desired duration is outside of the Timers capabilities
         OutOfRange,
+        /// The Timer is already full and can't add anything new at the moment
         Full,
+        /// Some other error occured
         Other(&'static str),
     }
 
+    /// A generic Trait allowing you to implement your own Wheel-Backend for the Timer
     pub trait Wheel {
         type Storage: AsRef<[Slot]>;
 
+        /// Move the current Slot in the Wheel along by one step
         fn tick(&self, storage: &Self::Storage);
 
+        /// Add the waker `step` slots after the current slot
         fn add_step<'t>(
             &self,
-            time: NonZeroUsize,
+            steps: NonZeroUsize,
             waker: Waker,
             storage: &'t Self::Storage,
         ) -> Result<TimerHandle<'t>, WheelAddError>;
@@ -316,7 +348,7 @@ pub mod fixed_size {
                 return Err(WheelAddError::OutOfRange);
             }
 
-            let waker_index = storage.add_waker(waker).map_err(|e| WheelAddError::Full)? as isize;
+            let waker_index = storage.add_waker(waker).map_err(|_| WheelAddError::Full)? as isize;
 
             for i in 0..31 {
                 let slot_index =
@@ -343,6 +375,7 @@ pub mod fixed_size {
             Err(WheelAddError::Full)
         }
     }
+
     impl Wheel for LevelTwoWheel {
         // 32 * 32 = 1024
         type Storage = SlotStorage<1024>;
@@ -448,6 +481,7 @@ pub mod fixed_size {
     where
         SCALE: Timescale,
     {
+        /// Returns a future that will resolve after around `time` milliseconds
         pub fn sleep_ms(&self, time: usize) -> SleepMs<'_, LevelOneWheel, SCALE> {
             SleepMs {
                 timer: self,
@@ -457,6 +491,7 @@ pub mod fixed_size {
         }
     }
 
+    /// The actual sleeping Future
     pub struct SleepMs<'t, WHEEL, SCALE>
     where
         WHEEL: Wheel,
