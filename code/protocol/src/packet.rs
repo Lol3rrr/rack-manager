@@ -69,7 +69,7 @@ pub enum PacketData<'r> {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum PacketDataParseError {
     UnknownID(u8),
 }
@@ -110,13 +110,13 @@ impl<'r> PacketData<'r> {
             }
             7 => Ok(Self::Metrics),
             8 => {
-                let (metrics, rest) = Sendable::deserialize(&value[1..]).unwrap();
+                let (metrics, _) = Sendable::deserialize(&value[1..]).unwrap();
 
                 Ok(Self::MetricsResponse { metrics })
             }
             9 => Ok(Self::ConfigureOptions),
             10 => {
-                let (options, rest) = Sendable::deserialize(&value[1..]).unwrap();
+                let (options, _) = Sendable::deserialize(&value[1..]).unwrap();
 
                 Ok(Self::ConfigureOptionsResponse { options })
             }
@@ -131,7 +131,7 @@ impl<'r> PacketData<'r> {
             }
             Self::InitProbeResponse { status, id } => {
                 data[0] = 1;
-                data[1] = if *status { 1 } else { 0 };
+                data[1] = u8::from(*status);
                 data[2] = id.unwrap_or(0);
             }
             Self::Init { id } => {
@@ -158,7 +158,7 @@ impl<'r> PacketData<'r> {
             Self::MetricsResponse { metrics } => {
                 data[0] = 8;
 
-                let buffer = metrics.serialize(&mut data[1..]).unwrap();
+                metrics.serialize(&mut data[1..]).unwrap();
             }
             Self::ConfigureOptions => {
                 data[0] = 9;
@@ -166,14 +166,21 @@ impl<'r> PacketData<'r> {
             Self::ConfigureOptionsResponse { options } => {
                 data[0] = 10;
 
-                let buffer = options.serialize(&mut data[1..]).unwrap();
+                options.serialize(&mut data[1..]).unwrap();
             }
         }
     }
 }
 
-pub enum PacketReadError {
-    SerialRead,
+#[derive(Debug, PartialEq, Eq)]
+pub enum PacketReadError<E> {
+    SerialRead(nb::Error<E>),
+    Deserialize(PacketDeserializeError),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PacketDeserializeError {
+    Deserialize(PacketDataParseError),
     Checksum,
 }
 
@@ -194,7 +201,10 @@ impl<'r> Packet<'r> {
         }
     }
 
-    pub fn read_blocking<'b, S>(serial: &mut S, buffer: &'b mut [u8; 256]) -> Result<Self, ()>
+    pub fn read_blocking<'b, S>(
+        serial: &mut S,
+        buffer: &'b mut [u8; 256],
+    ) -> Result<Self, PacketReadError<S::Error>>
     where
         'b: 'r,
         S: embedded_hal::serial::nb::Read,
@@ -207,17 +217,17 @@ impl<'r> Packet<'r> {
                     }
                     Err(nb::Error::WouldBlock) => continue,
                     Err(err) => {
-                        return Err(());
+                        return Err(PacketReadError::SerialRead(err));
                     }
                 };
                 break;
             }
         }
 
-        Self::deserialize(buffer)
+        Self::deserialize(buffer).map_err(PacketReadError::Deserialize)
     }
 
-    pub fn deserialize<'b>(buffer: &'b [u8; 256]) -> Result<Self, ()>
+    pub fn deserialize<'b>(buffer: &'b [u8; 256]) -> Result<Self, PacketDeserializeError>
     where
         'b: 'r,
     {
@@ -232,7 +242,8 @@ impl<'r> Packet<'r> {
         // Validate the Packet with the CRC
 
         let receiver_id: ReceiverID = raw_receiver_id.into();
-        let packet_data = PacketData::parse(protocol_version, &raw_data).map_err(|err| ())?;
+        let packet_data = PacketData::parse(protocol_version, raw_data)
+            .map_err(PacketDeserializeError::Deserialize)?;
 
         Ok(Self {
             protocol_version,

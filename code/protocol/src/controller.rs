@@ -1,6 +1,6 @@
 use core::array;
 
-use crate::{packet, VERSION};
+use crate::packet;
 
 /// This should only be used by the Controller in the Rack
 pub struct Controller<const N: usize, Sel, Rc, Ser>
@@ -30,13 +30,23 @@ struct CtrlExtension {
     initialized: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum InitError<SE> {
+    NBSerialError(nb::Error<SE>),
+    SerialError(SE),
+}
+
 impl<const N: usize, Sel, Rc, Ser> Controller<N, Sel, Rc, Ser>
 where
     Sel: Select<N>,
     Rc: ReadyCheck<N>,
     Ser: embedded_hal::serial::nb::Read + embedded_hal::serial::nb::Write,
 {
-    pub fn init(mut select: Sel, ready: Rc, mut serial: Ser) -> Result<Self, ()> {
+    pub fn init(
+        mut select: Sel,
+        ready: Rc,
+        mut serial: Ser,
+    ) -> Result<Self, InitError<Ser::Error>> {
         let extension = array::from_fn(|idx| {
             if !ready.check(idx) {
                 return CtrlExtension {
@@ -59,7 +69,7 @@ where
                     }
                 }
             }
-            serial.flush();
+            serial.flush().unwrap();
 
             let mut buffer = [0; 256];
             let response = packet::Packet::read_blocking(&mut serial, &mut buffer).expect("");
