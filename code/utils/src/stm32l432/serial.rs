@@ -1,10 +1,22 @@
+//! Provides an async serial implementation for use with stm32l432
+//!
+//! # Functionality
+//! This async serial implementation has two fundamental Parts, the futures and the notifiers.
+//! These work together to make the serial interface async compatible allowing for more efficient
+//! usage of ressources in your projects.
+//!
+//! ## The Notifiers
+//! You need two seperate notifiers, one for receiving and one for transmitting. The respective
+//! notifier should be called from the appropriate interrupt handler, signaling that the
+//! transaction might be completed.
+//! In the interrupt handlers, you need to to call [`SerialNotifier::transfer_complete`]
+
 use core::{
     future::Future, marker::PhantomData, sync::atomic, sync::atomic::AtomicBool, task::Waker,
 };
 
 use cortex_m::interrupt::InterruptNumber;
 use general::AsyncSerial;
-use hal::dma::CircReadDma;
 use stm32l4xx_hal::{self as hal};
 
 use super::NoInterruptMutex;
@@ -28,6 +40,8 @@ mod keys {
         };
     }
 
+    /// Used to specify what KEYs can be used for the Notifier, which in turn are needed to make
+    /// the async part of this interface work.
     pub trait NotifierKey: crate::sealed::Sealed {
         type Interrupt: cortex_m::interrupt::InterruptNumber;
 
@@ -81,6 +95,8 @@ mod notifier {
         };
     }
 
+    notifier!(Tx1Key);
+    notifier!(Rx1Key);
     notifier!(Tx2Key);
     notifier!(Rx2Key);
 
@@ -115,10 +131,14 @@ mod notifier {
 }
 pub use notifier::*;
 
+/// Defines some general functions needed for every DMA-Channel. This trait adds nothing new
+/// directly, but allows for more generic code.
 pub trait Channel: crate::sealed::Sealed {
     fn listen(&mut self, event: hal::dma::Event);
 }
 
+/// Defines a general interface for the DMA-Sender side, used to make the rest of the Code more
+/// generic
 pub trait DmaTx: crate::sealed::Sealed + Sized {
     type Key: NotifierKey + 'static;
     type Channel: Channel;
@@ -151,6 +171,8 @@ pub trait DmaTx: crate::sealed::Sealed + Sized {
     ) -> Option<&'static mut hal::dma::DMAFrame<256>>;
 }
 
+/// Defines a general interface for the DMA-Receiver side, used to make the rest of the Code more
+/// generic
 pub trait DmaRx: crate::sealed::Sealed + Sized {
     type Key: NotifierKey + 'static;
     type Channel: Channel;
@@ -360,6 +382,7 @@ where
     }
 }
 
+/// The Future is used to send a full buffer of data over the serial interface
 pub struct TxFuture<'t, Tx, IT>
 where
     Tx: DmaTx + 'static,
@@ -446,6 +469,7 @@ where
     }
 }
 
+/// The Future is used to receive a full buffer of data over the serial interface
 pub struct RxFuture<'t, Rx, IT>
 where
     Rx: DmaRx + 'static,
@@ -474,6 +498,8 @@ where
     }
 }
 
+/// This Trait specifies which KEYs can be used on the general Serial Interface, acting as an
+/// overarching Trait to define what all the underlying types will be
 pub trait SerialKey: crate::sealed::Sealed {
     type Rx: DmaRx;
     type Tx: DmaTx;
@@ -502,6 +528,7 @@ usart!(
     hal::serial::Tx<hal::stm32::USART2>
 );
 
+/// The async Read/Write Serial interface
 pub struct Serial<SK>
 where
     SK: SerialKey,
@@ -514,6 +541,7 @@ impl<SK> Serial<SK>
 where
     SK: SerialKey,
 {
+    /// Creates a new instance from the provided arguments and settings
     pub fn new(
         raw_tx: SK::Tx,
         raw_rx: SK::Rx,
