@@ -137,6 +137,7 @@ impl<'r> Sendable<'r> for ConfigOption<'r> {
     }
 }
 
+/// An Iterator for Data being send or received, allowing for lists in the Packets
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum OptionsIter<'r, T> {
     Received { buffer: &'r [u8], length: usize },
@@ -144,6 +145,7 @@ pub enum OptionsIter<'r, T> {
 }
 
 impl<'r, T> OptionsIter<'r, T> {
+    /// Get the number of Elements in the remaining Iterator
     pub fn length(&self) -> usize {
         match self {
             Self::Received { length, .. } => *length,

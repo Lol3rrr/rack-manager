@@ -15,13 +15,18 @@ where
     extensions: [CtrlExtension; N],
 }
 
+/// Defines an interface to check if a specific Extension is ready
 pub trait ReadyCheck<const N: usize> {
+    /// Check the ready state of the Extension with the given index
     fn check(&self, idx: usize) -> bool;
 
+    /// Check the ready state of all the Extensions
     fn check_all(&self) -> [bool; N];
 }
 
+/// Defines an interface to select a specific Extension
 pub trait Select<const N: usize> {
+    /// Select the Extension corresponding to the index
     fn select(&mut self, index: usize);
 }
 
