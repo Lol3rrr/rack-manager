@@ -11,11 +11,26 @@ pub struct Extension<R, Sel, Ser> {
     id: u8,
 }
 
-#[derive(Debug)]
-pub enum ExtensionInitError<RE> {
+pub enum ExtensionInitError<RE, Ser>
+where
+    Ser: embedded_hal::serial::nb::Read<u8> + embedded_hal::serial::nb::Write<u8>,
+{
     ReadyError(RE),
-    ReadingSerial,
-    WritingSerial,
+    ReadingSerial(packet::PacketReadError<Ser::Error>),
+    WritingSerial(nb::Error<<Ser as embedded_hal::serial::ErrorType>::Error>),
+}
+
+impl<RE, Ser> core::fmt::Debug for ExtensionInitError<RE, Ser>
+where
+    Ser: embedded_hal::serial::nb::Read<u8> + embedded_hal::serial::nb::Write<u8>,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ReadyError(_) => f.debug_tuple("ExtensionInitError::ReadyError").finish(),
+            Self::ReadingSerial(_) => f.debug_tuple("ExtensionInitError::ReadingSerial").finish(),
+            Self::WritingSerial(_) => f.debug_tuple("ExtensionInitError::WritingSerial").finish(),
+        }
+    }
 }
 
 impl<R, Sel, Ser> Extension<R, Sel, Ser>
@@ -28,13 +43,13 @@ where
         mut ready: R,
         selection: Sel,
         mut serial: Ser,
-    ) -> Result<Self, ExtensionInitError<R::Error>> {
+    ) -> Result<Self, ExtensionInitError<R::Error, Ser>> {
         ready.set_high().map_err(ExtensionInitError::ReadyError)?;
 
         let id = loop {
             let mut buffer = [0; 256];
             let packet = packet::Packet::read_blocking(&mut serial, &mut buffer)
-                .map_err(|err| ExtensionInitError::ReadingSerial)?;
+                .map_err(ExtensionInitError::ReadingSerial)?;
 
             // If we are not selected, we will not react to the packet
             if !selection.is_high().unwrap_or(false)
@@ -63,12 +78,12 @@ where
                             if let Err(e) = serial.write(byte) {
                                 match e {
                                     nb::Error::WouldBlock => continue,
-                                    err => return Err(ExtensionInitError::WritingSerial),
+                                    err => return Err(ExtensionInitError::WritingSerial(err)),
                                 };
                             }
                         }
                     }
-                    serial.flush();
+                    serial.flush().map_err(ExtensionInitError::WritingSerial)?;
 
                     continue;
                 }
@@ -81,9 +96,9 @@ where
                     for byte in response.serialize() {
                         serial
                             .write(byte)
-                            .map_err(|err| ExtensionInitError::WritingSerial)?;
+                            .map_err(ExtensionInitError::WritingSerial)?;
                     }
-                    serial.flush();
+                    serial.flush().map_err(ExtensionInitError::WritingSerial)?;
 
                     break *id;
                 }
@@ -148,7 +163,7 @@ where
                     async_serial.write(buffer).await;
                 }
                 packet::PacketData::Restart => {
-                    self.ready_pin.set_low();
+                    self.ready_pin.set_low().unwrap();
                     return;
                 }
                 packet::PacketData::Configure { option } => {

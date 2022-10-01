@@ -1,9 +1,14 @@
+/// A general Serialize/Deserialize trait to make composition of types easier
 pub trait Sendable<'r>: Sized {
     type SerError;
     type DeSerError;
 
+    /// Serializes the object into the given buffer and returns the remaining buffer, that can be
+    /// used for storing other information
     fn serialize<'b>(&self, buffer: &'b mut [u8]) -> Result<&'b mut [u8], Self::SerError>;
 
+    /// Attempts to deserialize the given Buffer into an instance of itself and returns that and
+    /// any remaining buffer, that might contain other data
     fn deserialize(buffer: &'r [u8]) -> Result<(Self, &'r [u8]), Self::DeSerError>;
 }
 

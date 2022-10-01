@@ -7,6 +7,11 @@ pub enum Value {
     Pwm { percent: u8 },
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ValueDeserializeError {
+    UnknownType(u8),
+}
+
 impl Value {
     pub fn serialize(&self) -> [u8; 2] {
         let mut buffer = [0; 2];
@@ -14,7 +19,7 @@ impl Value {
         match self {
             Self::Switch { state } => {
                 buffer[0] = 0;
-                buffer[1] = if *state { 1 } else { 0 };
+                buffer[1] = u8::from(*state);
             }
             Self::Pwm { percent } => {
                 buffer[0] = 1;
@@ -25,7 +30,7 @@ impl Value {
         buffer
     }
 
-    pub fn deserialize(buffer: &[u8; 2]) -> Result<Self, ()> {
+    pub fn deserialize(buffer: &[u8; 2]) -> Result<Self, ValueDeserializeError> {
         match buffer[0] {
             0 => {
                 let state = buffer[1] == 1;
@@ -35,8 +40,25 @@ impl Value {
                 let percent = buffer[1];
                 Ok(Self::Pwm { percent })
             }
-            _ => Err(()),
+            val => Err(ValueDeserializeError::UnknownType(val)),
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DataPointDeserializeError {
+    ValueError(ValueDeserializeError),
+    Other,
+}
+
+impl From<ValueDeserializeError> for DataPointDeserializeError {
+    fn from(e: ValueDeserializeError) -> Self {
+        Self::ValueError(e)
+    }
+}
+impl From<()> for DataPointDeserializeError {
+    fn from(_: ()) -> Self {
+        Self::Other
     }
 }
 
@@ -52,7 +74,7 @@ pub struct DataPoint<'r> {
 
 impl<'r> Sendable<'r> for DataPoint<'r> {
     type SerError = ();
-    type DeSerError = ();
+    type DeSerError = DataPointDeserializeError;
 
     fn serialize<'b>(&self, mut buffer: &'b mut [u8]) -> Result<&'b mut [u8], Self::SerError> {
         buffer = self.name.serialize(buffer)?;
@@ -79,9 +101,13 @@ pub enum ValueType {
     Pwm,
 }
 
+/// A single Configuration option provided by an Extension-Board. This allows you to communicate
+/// possible configurations to the Controller and therefore allow for more/runtime customization.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ConfigOption<'r> {
+    /// The Name of the Options, this should be a unique Name for this Board
     pub name: &'r str,
+    /// The Type of Option
     pub ty: ValueType,
 }
 
@@ -111,6 +137,7 @@ impl<'r> Sendable<'r> for ConfigOption<'r> {
     }
 }
 
+/// An Iterator for Data being send or received, allowing for lists in the Packets
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum OptionsIter<'r, T> {
     Received { buffer: &'r [u8], length: usize },
@@ -118,6 +145,7 @@ pub enum OptionsIter<'r, T> {
 }
 
 impl<'r, T> OptionsIter<'r, T> {
+    /// Get the number of Elements in the remaining Iterator
     pub fn length(&self) -> usize {
         match self {
             Self::Received { length, .. } => *length,
@@ -169,16 +197,38 @@ where
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum OptionsIterDeserializeError<E> {
+    EmptyBuffer,
+    InnerError(E),
+}
+impl<E> From<E> for OptionsIterDeserializeError<E> {
+    fn from(e: E) -> Self {
+        Self::InnerError(e)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum OptionsIterSerializeError<E> {
+    EmptyBuffer,
+    InnerError(E),
+}
+impl<E> From<E> for OptionsIterSerializeError<E> {
+    fn from(e: E) -> Self {
+        Self::InnerError(e)
+    }
+}
+
 impl<'r, T> Sendable<'r> for OptionsIter<'r, T>
 where
     T: Sendable<'r>,
 {
-    type SerError = ();
-    type DeSerError = ();
+    type SerError = OptionsIterSerializeError<T::SerError>;
+    type DeSerError = OptionsIterDeserializeError<T::DeSerError>;
 
     fn serialize<'b>(&self, mut buffer: &'b mut [u8]) -> Result<&'b mut [u8], Self::SerError> {
         if buffer.is_empty() {
-            return Err(());
+            return Err(OptionsIterSerializeError::EmptyBuffer);
         }
 
         match self {
@@ -187,18 +237,28 @@ where
 
                 buffer = &mut buffer[1..];
                 for item in data.iter() {
-                    buffer = item.serialize(buffer).map_err(|err| ())?;
+                    buffer = item.serialize(buffer)?;
                 }
 
                 Ok(buffer)
             }
-            Self::Received { buffer, length } => todo!(),
+            Self::Received {
+                buffer: r_buf,
+                length,
+            } => {
+                buffer[0] = *length as u8;
+
+                let r_length = r_buf.len();
+                buffer[1..r_length + 1].copy_from_slice(&r_buf[..r_length]);
+
+                Ok(&mut buffer[r_length + 1..])
+            }
         }
     }
 
     fn deserialize(buffer: &'r [u8]) -> Result<(Self, &'r [u8]), Self::DeSerError> {
         if buffer.is_empty() {
-            return Err(());
+            return Err(OptionsIterDeserializeError::EmptyBuffer);
         }
 
         let items = buffer[0] as usize;
@@ -206,7 +266,7 @@ where
         let mut length = 0;
         let mut rest = &buffer[1..];
         for _ in 0..items {
-            let (_, tmp): (T, _) = Sendable::deserialize(rest).map_err(|err| ())?;
+            let (_, tmp): (T, _) = Sendable::deserialize(rest)?;
 
             length += rest.len() - tmp.len();
             rest = tmp;
@@ -251,5 +311,34 @@ mod tests {
         assert!(fixed_iter
             .zip(deserialized)
             .all(|(first, second)| first == second));
+    }
+
+    #[test]
+    fn optioniter_serialize_deserialize_serialize() {
+        let fixed_iter: OptionsIter<'static, ConfigOption> = (&[
+            ConfigOption {
+                name: "testing1",
+                ty: ValueType::Pwm,
+            },
+            ConfigOption {
+                name: "testing2",
+                ty: ValueType::Switch,
+            },
+        ])
+            .into();
+
+        let mut buffer = [0; 256];
+
+        fixed_iter.serialize(&mut buffer).expect("Should work");
+
+        let (deserialized, _): (OptionsIter<'_, ConfigOption>, _) =
+            Sendable::deserialize(&buffer).expect("Should work");
+
+        assert_eq!(fixed_iter.length(), deserialized.length());
+
+        let mut buffer2 = [0; 256];
+        deserialized.serialize(&mut buffer2).expect("Should work");
+
+        assert_eq!(buffer, buffer2);
     }
 }
