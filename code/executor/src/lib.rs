@@ -1,3 +1,21 @@
+//! A no_std compatible async executor, without any dynamic memory allocation.
+//!
+//! # Scope
+//! This crate is only intended to provide the executor and nothing else. So most extra features
+//! that you would expect, like Timers, etc., are not included with or intended for this crate
+//! and instead need to be provided by another external crate.
+//!
+//! # Example
+//! ```rust,no_run
+//! # use executor::{tasks, Runtime};
+//! async fn first() {}
+//! async fn second() {}
+//!
+//! tasks!(list, (first(), first_task), (second(), second_task));
+//!
+//! let runtime = Runtime::new(list);
+//! runtime.run();
+//! ```
 #![cfg_attr(not(test), no_std)]
 #![feature(generic_const_exprs)]
 
@@ -14,7 +32,7 @@ pub use tasklist::*;
 
 mod waking;
 
-/// An async Runtime for a no_std environment, which does not perform any runtime memory allocation.
+/// An async Runtime for a no_std environment, which does not perform any dynamic memory allocation.
 ///
 /// This runtime only handles a fixed number of async Tasks, that are known at compile-time and
 /// does not support dynamically starting/spawning new Tasks.

@@ -2,7 +2,23 @@ use core::{future::Future, pin::Pin};
 
 use crate::staticlist::{StaticList, StaticListEnd};
 
-/// Allows to more easily construct a TaskList
+/// Allows to more easily construct a TaskList.
+///
+/// # Usage
+/// The first identifier is the name for the variable that is created for your list, which is then
+/// followed by a list of tuples consisting of (future, name), where future can be any expression
+/// that evalutes to a future and the name is the name for a variable created for this future.
+///
+/// # Example
+/// ```rust
+/// # use executor::tasks;
+/// async fn first() {}
+/// async fn second() {}
+///
+/// // This will create a new variable named "list" that is your task-list containing the futures
+/// // returned by first() and second()
+/// tasks!(list, (first(), first_task), (second(), second_task));
+/// ```
 #[macro_export]
 macro_rules! tasks {
     ($name:ident, ($fut:expr, $fut_n:ident), $(($futs:expr, $futs_n:ident)),*) => {
@@ -21,7 +37,24 @@ macro_rules! tasks {
 /// Generalises over a Static List of Tasks to be executed by the Runtime
 pub trait TaskList<'f>: StaticList<Pin<&'f mut dyn Future<Output = ()>>> {}
 
-/// A single Task-Node in the TaskList
+/// A single Task-Node in the TaskList.
+///
+/// # Usage
+/// Although this can be used to construct a TaskList yourself, it is recommended to instead
+/// use the [`tasks`] macro, which greatly simplifies the usage.
+///
+/// # Example - Building a list of Tasks
+/// ```rust
+/// # use executor::{Task, StaticList};
+/// async fn first() {}
+/// async fn second() {}
+///
+/// let mut first_task = first();
+/// let mut second_task = second();
+///
+/// let list = Task::new(&mut first_task).append(Task::new(&mut second_task));
+/// # assert_eq!(2, list.length());
+/// ```
 pub struct Task<'f, N, const L: usize> {
     fut: Pin<&'f mut dyn Future<Output = ()>>,
     next: Option<N>,
